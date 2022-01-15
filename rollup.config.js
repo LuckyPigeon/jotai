@@ -1,8 +1,10 @@
 import path from 'path'
 import babelPlugin from '@rollup/plugin-babel'
 import resolve from '@rollup/plugin-node-resolve'
+import replace from '@rollup/plugin-replace'
 import typescript from '@rollup/plugin-typescript'
 import esbuild from 'rollup-plugin-esbuild'
+import { terser } from 'rollup-plugin-terser'
 const createBabelConfig = require('./babel.config')
 
 const extensions = ['.js', '.ts', '.tsx']
@@ -21,9 +23,9 @@ function getBabelOptions(targets) {
   }
 }
 
-function getEsbuild(target) {
+function getEsbuild(target, env = 'development') {
   return esbuild({
-    minify: false,
+    minify: env === 'production',
     target,
     platform: 'neutral',
     tsconfig: path.resolve('./tsconfig.json'),
@@ -55,7 +57,14 @@ function createESMConfig(input, output) {
       { file: `${output}.mjs`, format: 'esm' },
     ],
     external,
-    plugins: [resolve({ extensions }), getEsbuild('node12')],
+    plugins: [
+      resolve({ extensions }),
+      replace({
+        __DEV__: 'import.meta.env!=="production"',
+        preventAssignment: true,
+      }),
+      getEsbuild('node12'),
+    ],
   }
 }
 
@@ -66,16 +75,20 @@ function createCommonJSConfig(input, output) {
     external,
     plugins: [
       resolve({ extensions }),
+      replace({
+        __DEV__: 'process.env.NODE_ENV!=="production"',
+        preventAssignment: true,
+      }),
       babelPlugin(getBabelOptions({ ie: 11 })),
     ],
   }
 }
 
-function createUMDConfig(input, output) {
+function createUMDConfig(input, output, env) {
   return {
     input,
     output: {
-      file: output,
+      file: `${output}.${env}.js`,
       format: 'umd',
       exports: 'named',
       name: 'jotai',
@@ -83,21 +96,33 @@ function createUMDConfig(input, output) {
     external,
     plugins: [
       resolve({ extensions }),
+      replace({
+        __DEV__: env !== 'production' ? 'true' : 'false',
+        preventAssignment: true,
+      }),
       babelPlugin(getBabelOptions({ ie: 11 })),
+      ...(env === 'production' ? [terser()] : []),
     ],
   }
 }
 
-function createSystemConfig(input, output) {
+function createSystemConfig(input, output, env) {
   return {
     input,
     output: {
-      file: output,
+      file: `${output}.${env}.js`,
       format: 'system',
       exports: 'named',
     },
     external,
-    plugins: [resolve({ extensions }), getEsbuild('node12')],
+    plugins: [
+      resolve({ extensions }),
+      replace({
+        __DEV__: env !== 'production' ? 'true' : 'false',
+        preventAssignment: true,
+      }),
+      getEsbuild('node12', env),
+    ],
   }
 }
 
@@ -108,15 +133,19 @@ export default function (args) {
     return [
       createCommonJSConfig(`src/${c}.ts`, `dist/${c}.js`),
       createESMConfig(`src/${c}.ts`, `dist/esm/${c}`),
-      createUMDConfig(`src/${c}.ts`, `dist/umd/${c}.js`),
-      createSystemConfig(`src/${c}.ts`, `dist/system/${c}.js`),
+      createUMDConfig(`src/${c}.ts`, `dist/umd/${c}`, 'development'),
+      createUMDConfig(`src/${c}.ts`, `dist/umd/${c}`, 'production'),
+      createSystemConfig(`src/${c}.ts`, `dist/system/${c}`, 'development'),
+      createSystemConfig(`src/${c}.ts`, `dist/system/${c}`, 'production'),
     ]
   }
   return [
     createDeclarationConfig('src/index.ts', 'dist'),
     createCommonJSConfig('src/index.ts', 'dist/index.js'),
     createESMConfig('src/index.ts', 'dist/esm/index'),
-    createUMDConfig('src/index.ts', 'dist/umd/index.js'),
-    createSystemConfig('src/index.ts', 'dist/system/index.js'),
+    createUMDConfig('src/index.ts', 'dist/umd/index', 'development'),
+    createUMDConfig('src/index.ts', 'dist/umd/index', 'production'),
+    createSystemConfig('src/index.ts', 'dist/system/index', 'development'),
+    createSystemConfig('src/index.ts', 'dist/system/index', 'production'),
   ]
 }
